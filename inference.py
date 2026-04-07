@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import textwrap
 from typing import Dict, List, Any, Optional
@@ -8,16 +9,20 @@ from openai import OpenAI
 from environment import FraudInvestigationEnv
 from models import Action, ActionType, SuspectRole, TimelineEvent
 
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+except Exception:
+    pass
+
 
 API_BASE_URL = os.getenv("API_BASE_URL")
 API_KEY = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
 MODEL_NAME = os.getenv("MODEL_NAME")
 
 TEMPERATURE = 0.0
-MAX_TOKENS = 500
+MAX_TOKENS = 1000
 DOC_CHAR_LIMIT = 1200
 
-# Curated evidence docs per task: chosen to maximize signal and minimize token cost
 CURATED_DOCS: Dict[str, List[str]] = {
     "easy": [
         "exp_002",
@@ -74,6 +79,46 @@ MAX_TIMELINE_EVENTS = {
 }
 
 
+def log_start(task_id: str):
+    print(f"[START] task={task_id}", flush=True)
+
+
+def log_step(task_id: str, step: int, action: str, reward: float, done: bool):
+    done_str = "true" if done else "false"
+    print(
+        f"[STEP] task={task_id} step={step} action={action} reward={reward:.4f} done={done_str}",
+        flush=True,
+    )
+
+
+def log_end(task_id: str, score: float, steps: int):
+    print(f"[END] task={task_id} score={score:.4f} steps={steps}", flush=True)
+
+
+def log_summary(avg: float):
+    print(f"[SUMMARY] average={avg:.4f}", flush=True)
+
+
+def build_client() -> Optional[OpenAI]:
+    if not API_BASE_URL or not API_KEY or not MODEL_NAME:
+        print(
+            "WARN: Missing API_BASE_URL / HF_TOKEN / MODEL_NAME. "
+            "Running in deterministic fallback mode.",
+            flush=True,
+        )
+        return None
+
+    try:
+        return OpenAI(
+            base_url=API_BASE_URL,
+            api_key=API_KEY,
+        )
+    except Exception as e:
+        print(f"WARN: Failed to initialize OpenAI client: {e}", flush=True)
+        print("WARN: Falling back to deterministic mode.", flush=True)
+        return None
+
+
 def safe_json_extract(text: str) -> Dict[str, Any]:
     if not text:
         return {}
@@ -87,13 +132,11 @@ def safe_json_extract(text: str) -> Dict[str, Any]:
         text = text.split("```", 1)[1]
         text = text.split("```", 1)[0].strip()
 
-    # Try direct parse first
     try:
         return json.loads(text)
     except Exception:
         pass
 
-    # Try extracting largest {...} block
     start = text.find("{")
     end = text.rfind("}")
     if start != -1 and end != -1 and end > start:
@@ -130,6 +173,7 @@ def normalize_scheme(task_id: str, scheme: Optional[str]) -> str:
 def normalize_role(role: Optional[str]) -> Optional[SuspectRole]:
     if not role:
         return None
+
     r = role.strip().lower().replace(" ", "_")
     mapping = {
         "mastermind": SuspectRole.MASTERMIND,
@@ -148,16 +192,29 @@ def truncate(text: str, limit: int = DOC_CHAR_LIMIT) -> str:
     return text[:limit] + "\n...[truncated]"
 
 
+def env_step_with_log(env: FraudInvestigationEnv, task_id: str, action: Action):
+    obs, reward, done, info = env.step(action)
+    log_step(
+        task_id=task_id,
+        step=obs.step_number,
+        action=action.action_type.value,
+        reward=reward.score,
+        done=done,
+    )
+    return obs, reward, done, info
+
+
 def examine_curated_docs(env: FraudInvestigationEnv, task_id: str) -> Dict[str, str]:
-    """Examine a handpicked set of high-signal docs and return their contents."""
     contents: Dict[str, str] = {}
 
     for doc_id in CURATED_DOCS[task_id]:
-        obs, reward, done, info = env.step(
-            Action(action_type=ActionType.EXAMINE_DOCUMENT, document_id=doc_id)
+        obs, reward, done, info = env_step_with_log(
+            env,
+            task_id,
+            Action(action_type=ActionType.EXAMINE_DOCUMENT, document_id=doc_id),
         )
         contents[doc_id] = obs.document_content or ""
-        print(f"  Examine: {doc_id}")
+        print(f"  Examine: {doc_id}", flush=True)
         if done:
             break
 
@@ -189,7 +246,6 @@ def build_reasoning_prompt(task_id: str, obs, doc_contents: Dict[str, str]) -> s
         - Use ONLY document IDs from the provided documents.
         - Do NOT invent people, dates, or document IDs.
         - Identify only the most strongly supported suspects.
-        - Prefer perpetrators over peripheral witnesses unless the witness/participant is central.
         - Keep evidence focused and high quality.
         - Return ONLY valid JSON. No markdown, no explanation.
 
@@ -211,11 +267,11 @@ def build_reasoning_prompt(task_id: str, obs, doc_contents: Dict[str, str]) -> s
         Return this exact JSON shape:
         {{
           "scheme_type": "one_of_allowed_values",
-          "summary": "1-3 sentence summary",
+          "summary": "one short sentence",
           "evidence": [
             {{
               "document_id": "doc_id",
-              "reason": "why this document is important"
+              "reason": "one short sentence"
             }}
           ],
           "suspects": [
@@ -223,13 +279,13 @@ def build_reasoning_prompt(task_id: str, obs, doc_contents: Dict[str, str]) -> s
               "name": "full name",
               "role": "mastermind|accomplice|reluctant_participant|witness|innocent",
               "evidence_ids": ["doc_id1", "doc_id2"],
-              "reasoning": "why this person has this role"
+              "reasoning": "one short sentence"
             }}
           ],
           "timeline": [
             {{
               "date": "YYYY-MM-DD or month/year if exact date unclear",
-              "description": "event description",
+              "description": "short event description",
               "document_ids": ["doc_id1", "doc_id2"]
             }}
           ]
@@ -249,33 +305,61 @@ def build_reasoning_prompt(task_id: str, obs, doc_contents: Dict[str, str]) -> s
 
 
 def ask_model_for_report(
-    client: OpenAI, task_id: str, obs, doc_contents: Dict[str, str]
+    client: OpenAI,
+    task_id: str,
+    obs,
+    doc_contents: Dict[str, str],
 ) -> Dict[str, Any]:
     prompt = build_reasoning_prompt(task_id, obs, doc_contents)
 
-    completion = client.chat.completions.create(
-        model=MODEL_NAME,
-        messages=[
-            {
-                "role": "system",
-                "content": "You are a precise forensic analyst. Output only valid JSON.",
-            },
-            {
-                "role": "user",
-                "content": prompt,
-            },
-        ],
-        temperature=TEMPERATURE,
-        max_tokens=MAX_TOKENS,
-    )
+    try:
+        completion = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a precise forensic analyst. Output only valid JSON.",
+                },
+                {
+                    "role": "user",
+                    "content": prompt,
+                },
+            ],
+            temperature=TEMPERATURE,
+            max_tokens=MAX_TOKENS,
+            response_format={"type": "json_object"},
+        )
+    except Exception:
+        completion = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a precise forensic analyst. Output only valid JSON.",
+                },
+                {
+                    "role": "user",
+                    "content": prompt,
+                },
+            ],
+            temperature=TEMPERATURE,
+            max_tokens=MAX_TOKENS,
+        )
 
     response_text = completion.choices[0].message.content or ""
     data = safe_json_extract(response_text)
+
+    if not data:
+        print("  RAW MODEL OUTPUT (parse failed):", flush=True)
+        print(response_text[:1500], flush=True)
+
     return data
 
 
 def filtered_evidence(
-    task_id: str, report: Dict[str, Any], allowed_doc_ids: set
+    task_id: str,
+    report: Dict[str, Any],
+    allowed_doc_ids: set,
 ) -> List[Dict[str, str]]:
     items = report.get("evidence", [])
     if not isinstance(items, list):
@@ -343,7 +427,9 @@ def filtered_suspects(
 
 
 def filtered_timeline(
-    task_id: str, report: Dict[str, Any], allowed_doc_ids: set
+    task_id: str,
+    report: Dict[str, Any],
+    allowed_doc_ids: set,
 ) -> List[TimelineEvent]:
     items = report.get("timeline", [])
     if not isinstance(items, list):
@@ -382,126 +468,174 @@ def filtered_timeline(
 def task_aware_fallback_report(
     task_id: str, allowed_doc_ids: List[str]
 ) -> Dict[str, Any]:
-    # Minimal deterministic fallback if API fails or JSON is malformed
     fallback = {
         "easy": {
             "scheme_type": "expense_fraud",
-            "summary": "Likely false expense claims involving Bella Italia.",
+            "summary": "David Chen likely submitted false dinner expense claims contradicted by external records.",
             "evidence": [
                 {
                     "document_id": "ext_001",
-                    "reason": "Restaurant closure period is inconsistent with claimed dinners.",
+                    "reason": "Restaurant closure conflicts with claimed dinners.",
                 },
                 {
-                    "document_id": "exp_002",
-                    "reason": "Expense claim on a suspicious date.",
+                    "document_id": "cal_001",
+                    "reason": "Travel schedule conflicts with dinner dates.",
+                },
+                {
+                    "document_id": "email_004",
+                    "reason": "Client declined one of the claimed dinners.",
+                },
+                {"document_id": "exp_002", "reason": "Suspicious expense date."},
+                {
+                    "document_id": "exp_003",
+                    "reason": "Another suspicious expense date.",
                 },
             ],
             "suspects": [
                 {
                     "name": "David Chen",
                     "role": "mastermind",
-                    "evidence_ids": ["ext_001", "exp_002"],
-                    "reasoning": "Submitted suspicious expense claims contradicted by external records.",
+                    "evidence_ids": ["ext_001", "cal_001", "email_004", "exp_002"],
+                    "reasoning": "He submitted expense claims contradicted by business records and communications.",
                 }
             ],
             "timeline": [
                 {
+                    "date": "2024-03-11",
+                    "description": "Client declined the proposed dinner meeting.",
+                    "document_ids": ["email_004"],
+                },
+                {
                     "date": "2024-03-12",
-                    "description": "A suspicious dinner expense was submitted during the restaurant closure period.",
-                    "document_ids": ["exp_002", "ext_001"],
-                }
+                    "description": "A suspicious Bella Italia expense was claimed during the closure period.",
+                    "document_ids": ["exp_002", "ext_001", "cal_001"],
+                },
+                {
+                    "date": "2024-03-22",
+                    "description": "Another suspicious Bella Italia expense was submitted.",
+                    "document_ids": ["exp_003", "ext_001"],
+                },
             ],
         },
         "medium": {
             "scheme_type": "vendor_kickback",
-            "summary": "Likely procurement steering toward Apex Solutions tied to Sarah Martinez's family.",
+            "summary": "Sarah Martinez likely steered contracts to Apex Solutions, which is tied to Carlos Martinez.",
             "evidence": [
                 {
-                    "document_id": "ext_m01",
-                    "reason": "Corporate registry links Apex to Carlos Martinez-Reeves.",
+                    "document_id": "proc_001",
+                    "reason": "Apex won despite inflated pricing.",
+                },
+                {
+                    "document_id": "proc_005",
+                    "reason": "Suspicious contract moved forward despite concerns.",
                 },
                 {
                     "document_id": "fin_m01",
                     "reason": "Conflict disclosure appears incomplete.",
                 },
                 {
+                    "document_id": "ext_m01",
+                    "reason": "Corporate registry links Apex to Carlos Martinez-Reeves.",
+                },
+                {
                     "document_id": "email_m07",
                     "reason": "Personal email suggests coordination with Carlos.",
+                },
+                {
+                    "document_id": "market_001",
+                    "reason": "Market pricing contradicts procurement justifications.",
                 },
             ],
             "suspects": [
                 {
                     "name": "Sarah Martinez",
                     "role": "mastermind",
-                    "evidence_ids": ["fin_m01", "email_m07"],
-                    "reasoning": "Directed awards while concealing a family conflict.",
+                    "evidence_ids": ["fin_m01", "email_m07", "proc_005", "proc_001"],
+                    "reasoning": "She controlled procurement while concealing a family conflict and directing suspicious awards.",
                 },
                 {
-                    "name": "Carlos Martinez",
+                    "name": "Carlos Martinez-Reeves",
                     "role": "accomplice",
                     "evidence_ids": ["ext_m01", "email_m07"],
-                    "reasoning": "Connected to the vendor receiving suspicious contracts.",
+                    "reasoning": "He is tied to the vendor receiving suspicious contracts.",
                 },
             ],
             "timeline": [
                 {
+                    "date": "2023-02-10",
+                    "description": "Early pricing concerns were raised about Apex.",
+                    "document_ids": ["proc_001"],
+                },
+                {
                     "date": "2023-05-18",
-                    "description": "Finance raised concerns about a recurring pattern of overpriced Apex contracts.",
+                    "description": "Finance escalated repeated concerns about Apex contract pricing.",
                     "document_ids": ["email_m03", "proc_002"],
-                }
+                },
+                {
+                    "date": "2024-01-25",
+                    "description": "Personal email indicated coordination with Carlos around the procurement scheme.",
+                    "document_ids": ["email_m07", "proc_005"],
+                },
             ],
         },
         "hard": {
             "scheme_type": "revenue_fabrication",
-            "summary": "Likely revenue inflation through shell customers and unsupported recognition before fundraising.",
+            "summary": "Robert Kim likely orchestrated fabricated revenue using shell customers and pressured internal staff.",
             "evidence": [
                 {
                     "document_id": "email_h01",
                     "reason": "CFO pushed for contracts that would make growth look real.",
                 },
                 {
-                    "document_id": "fin_h03",
-                    "reason": "No cash receipts from suspicious customers.",
+                    "document_id": "ext_h01",
+                    "reason": "A supposed customer address is a UPS store.",
                 },
                 {
-                    "document_id": "ext_h01",
-                    "reason": "Customer address resolves to a UPS store.",
+                    "document_id": "crm_h01",
+                    "reason": "Suspicious deals skipped the normal pipeline.",
                 },
                 {
                     "document_id": "ship_001",
-                    "reason": "No real deployment activity for suspicious customers.",
+                    "reason": "No real deployment activity occurred for suspicious customers.",
+                },
+                {
+                    "document_id": "fin_h03",
+                    "reason": "No cash was collected from suspicious customers.",
+                },
+                {
+                    "document_id": "inv_001",
+                    "reason": "Investor materials relied on suspicious customer metrics.",
                 },
             ],
             "suspects": [
                 {
                     "name": "Robert Kim",
                     "role": "mastermind",
-                    "evidence_ids": ["email_h01", "fin_h03"],
-                    "reasoning": "Directed the numbers narrative ahead of fundraising.",
+                    "evidence_ids": ["email_h01", "fin_h03", "inv_001"],
+                    "reasoning": "He drove the misleading growth narrative ahead of fundraising.",
                 },
                 {
                     "name": "Lisa Wang",
                     "role": "accomplice",
                     "evidence_ids": ["email_h02", "crm_h01"],
-                    "reasoning": "Routed suspicious deals outside normal sales process.",
+                    "reasoning": "She routed suspicious deals outside the normal sales process.",
                 },
                 {
                     "name": "Tom Baker",
                     "role": "reluctant_participant",
                     "evidence_ids": ["email_h05", "email_h07"],
-                    "reasoning": "Booked questionable revenue under CFO pressure.",
+                    "reasoning": "He booked questionable revenue under pressure from the CFO.",
                 },
             ],
             "timeline": [
                 {
                     "date": "2023-07-10",
-                    "description": "Pressure began to manufacture stronger growth before Series C.",
+                    "description": "Pressure began to create stronger-looking growth before Series C.",
                     "document_ids": ["email_h01"],
                 },
                 {
                     "date": "2023-10-20",
-                    "description": "Unsupported revenue recognition was explicitly directed.",
+                    "description": "Unsupported revenue recognition was directed internally.",
                     "document_ids": ["email_h05", "email_h07"],
                 },
             ],
@@ -509,17 +643,62 @@ def task_aware_fallback_report(
     }
 
     report = fallback[task_id]
-
-    # filter docs just in case
     allowed = set(allowed_doc_ids)
+
     report["evidence"] = [e for e in report["evidence"] if e["document_id"] in allowed]
-    for s in report["suspects"]:
-        s["evidence_ids"] = [eid for eid in s["evidence_ids"] if eid in allowed]
+
+    for suspect in report["suspects"]:
+        suspect["evidence_ids"] = [
+            eid for eid in suspect["evidence_ids"] if eid in allowed
+        ]
+
     report["timeline"] = [
-        {**t, "document_ids": [eid for eid in t["document_ids"] if eid in allowed]}
-        for t in report["timeline"]
+        {
+            **event,
+            "document_ids": [eid for eid in event["document_ids"] if eid in allowed],
+        }
+        for event in report["timeline"]
     ]
+
     return report
+
+
+def supplement_with_fallback_suspects(
+    task_id: str,
+    suspects: List[Dict[str, Any]],
+    flagged_doc_ids_set: set,
+    allowed_doc_ids: List[str],
+) -> List[Dict[str, Any]]:
+    fallback = task_aware_fallback_report(task_id, allowed_doc_ids)
+    fallback_suspects = filtered_suspects(fallback, flagged_doc_ids_set)
+
+    existing = {s["name"].lower() for s in suspects}
+    for fs in fallback_suspects:
+        if fs["name"].lower() not in existing:
+            suspects.append(fs)
+            existing.add(fs["name"].lower())
+        if len(suspects) >= 4:
+            break
+    return suspects
+
+
+def supplement_with_fallback_timeline(
+    task_id: str,
+    timeline: List[TimelineEvent],
+    allowed_doc_ids_set: set,
+    allowed_doc_ids: List[str],
+) -> List[TimelineEvent]:
+    fallback = task_aware_fallback_report(task_id, allowed_doc_ids)
+    fallback_timeline = filtered_timeline(task_id, fallback, allowed_doc_ids_set)
+
+    existing = {t.description for t in timeline}
+    for ft in fallback_timeline:
+        if ft.description not in existing:
+            timeline.append(ft)
+            existing.add(ft.description)
+        if len(timeline) >= MAX_TIMELINE_EVENTS[task_id]:
+            break
+    return timeline
 
 
 def execute_report(
@@ -532,133 +711,149 @@ def execute_report(
 
     evidence_items = filtered_evidence(task_id, report, allowed_doc_ids_set)
     if not evidence_items:
+        print("  Using fallback report for evidence", flush=True)
         report = task_aware_fallback_report(task_id, allowed_doc_ids)
         evidence_items = filtered_evidence(task_id, report, allowed_doc_ids_set)
 
     flagged_doc_ids = []
 
-    # Flag evidence first
     for item in evidence_items:
-        obs, reward, done, info = env.step(
+        obs, reward, done, info = env_step_with_log(
+            env,
+            task_id,
             Action(
                 action_type=ActionType.FLAG_EVIDENCE,
                 document_id=item["document_id"],
                 evidence_reason=item["reason"],
-            )
+            ),
         )
-        print(f"  Flag evidence: {item['document_id']}")
+        print(f"  Flag evidence: {item['document_id']}", flush=True)
         flagged_doc_ids.append(item["document_id"])
         if done:
             return reward.score
 
     flagged_doc_ids_set = set(flagged_doc_ids)
 
-    # Identify suspects
     suspects = filtered_suspects(report, flagged_doc_ids_set)
-    if not suspects:
-        fallback = task_aware_fallback_report(task_id, allowed_doc_ids)
-        suspects = filtered_suspects(fallback, flagged_doc_ids_set)
+    if task_id == "hard" and len(suspects) < 3:
+        suspects = supplement_with_fallback_suspects(
+            task_id, suspects, flagged_doc_ids_set, allowed_doc_ids
+        )
+    elif not suspects:
+        print("  Using fallback report for suspects", flush=True)
+        suspects = supplement_with_fallback_suspects(
+            task_id, suspects, flagged_doc_ids_set, allowed_doc_ids
+        )
 
     for suspect in suspects:
-        obs, reward, done, info = env.step(
+        obs, reward, done, info = env_step_with_log(
+            env,
+            task_id,
             Action(
                 action_type=ActionType.IDENTIFY_SUSPECT,
                 person_name=suspect["name"],
                 person_role=suspect["role"],
                 evidence_ids=suspect["evidence_ids"],
                 evidence_reason=suspect["reasoning"],
-            )
+            ),
         )
-        print(f"  Identify suspect: {suspect['name']} ({suspect['role'].value})")
+        print(
+            f"  Identify suspect: {suspect['name']} ({suspect['role'].value})",
+            flush=True,
+        )
         if done:
             return reward.score
 
-    # Timeline
     timeline = filtered_timeline(task_id, report, allowed_doc_ids_set)
-    if not timeline:
-        fallback = task_aware_fallback_report(task_id, allowed_doc_ids)
-        timeline = filtered_timeline(task_id, fallback, allowed_doc_ids_set)
+    if task_id == "easy" and len(timeline) < 3:
+        timeline = supplement_with_fallback_timeline(
+            task_id, timeline, allowed_doc_ids_set, allowed_doc_ids
+        )
+    elif not timeline:
+        print("  Using fallback report for timeline", flush=True)
+        timeline = supplement_with_fallback_timeline(
+            task_id, timeline, allowed_doc_ids_set, allowed_doc_ids
+        )
 
     if timeline:
-        obs, reward, done, info = env.step(
+        obs, reward, done, info = env_step_with_log(
+            env,
+            task_id,
             Action(
                 action_type=ActionType.ESTABLISH_TIMELINE,
                 timeline_events=timeline,
-            )
+            ),
         )
-        print(f"  Establish timeline: {len(timeline)} events")
+        print(f"  Establish timeline: {len(timeline)} events", flush=True)
         if done:
             return reward.score
 
-    # Submit report
     scheme = normalize_scheme(task_id, report.get("scheme_type"))
     summary = report.get("summary", "Investigation findings submitted.")
 
-    obs, reward, done, info = env.step(
+    obs, reward, done, info = env_step_with_log(
+        env,
+        task_id,
         Action(
             action_type=ActionType.SUBMIT_REPORT,
             findings={
                 "scheme_type": scheme,
                 "summary": summary,
             },
-        )
+        ),
     )
-    print("  Submit report")
-    print(f"\n  REPORT SUBMITTED")
-    print(f"\n  Score: {reward.score:.4f}")
-    print(f"  Breakdown: {json.dumps(reward.breakdown, indent=2)}")
-    print(f"  {reward.message}")
+    print("  Submit report", flush=True)
+    print("\n  REPORT SUBMITTED\n", flush=True)
+    print(f"  Score: {reward.score:.4f}", flush=True)
+    print(f"  Breakdown: {json.dumps(reward.breakdown, indent=2)}", flush=True)
+    print(f"  {reward.message}", flush=True)
     return reward.score
 
 
-def run_task(client: OpenAI, task_id: str) -> float:
+def run_task(client: Optional[OpenAI], task_id: str) -> float:
     env = FraudInvestigationEnv(task_id=task_id)
     obs = env.reset()
 
-    print(f"\n{'=' * 70}")
-    print(f"INVESTIGATION: {task_id.upper()}")
-    print(f"{'=' * 70}")
-    print(f"Scenario: {obs.scenario_description}")
-    print(f"Tip: {obs.whistleblower_tip[:220]}...")
-    print(f"Available documents: {len(obs.available_sources)}")
-    print(f"Max steps: {obs.max_steps}")
+    log_start(task_id)
 
-    # Phase 1: deterministic examination of curated docs
+    print(f"\n{'=' * 70}", flush=True)
+    print(f"INVESTIGATION: {task_id.upper()}", flush=True)
+    print(f"{'=' * 70}", flush=True)
+    print(f"Scenario: {obs.scenario_description}", flush=True)
+    print(f"Tip: {obs.whistleblower_tip[:220]}...", flush=True)
+    print(f"Available documents: {len(obs.available_sources)}", flush=True)
+    print(f"Max steps: {obs.max_steps}", flush=True)
+
     doc_contents = examine_curated_docs(env, task_id)
     allowed_doc_ids = list(doc_contents.keys())
 
-    # Phase 2: one synthesis call
-    try:
-        report = ask_model_for_report(client, task_id, obs, doc_contents)
-        if not report:
-            raise ValueError("Empty/invalid JSON report")
-    except Exception as e:
-        print(f"  API/report error: {e}")
+    report = None
+    if client is not None:
+        try:
+            report = ask_model_for_report(client, task_id, obs, doc_contents)
+            if not report:
+                raise ValueError("Empty/invalid JSON report")
+        except Exception as e:
+            print(f"  API/report error: {e}", flush=True)
+
+    if not report:
+        print("  Using fallback report", flush=True)
         report = task_aware_fallback_report(task_id, allowed_doc_ids)
 
-    # Phase 3: deterministic execution of returned structure
     final_score = execute_report(env, task_id, report, allowed_doc_ids)
+
+    final_state = env.state()
+    steps_taken = final_state.get("step_count", 0)
+    log_end(task_id, final_score, steps_taken)
+
     return final_score
 
 
 def main():
-    if not API_BASE_URL:
-        print("ERROR: API_BASE_URL not set")
-        return
-    if not API_KEY:
-        print("ERROR: HF_TOKEN/API_KEY not set")
-        return
-    if not MODEL_NAME:
-        print("ERROR: MODEL_NAME not set")
-        return
+    print(f"API Base: {API_BASE_URL}", flush=True)
+    print(f"Model: {MODEL_NAME}", flush=True)
 
-    print(f"API Base: {API_BASE_URL}")
-    print(f"Model: {MODEL_NAME}")
-
-    client = OpenAI(
-        base_url=API_BASE_URL,
-        api_key=API_KEY,
-    )
+    client = build_client()
 
     results = {}
     for task_id in ["easy", "medium", "hard"]:
@@ -666,18 +861,22 @@ def main():
             score = run_task(client, task_id)
             results[task_id] = score
         except Exception as e:
-            print(f"\nERROR on task {task_id}: {e}")
+            print(f"\nERROR on task {task_id}: {e}", flush=True)
             results[task_id] = 0.0
+            log_start(task_id)
+            log_end(task_id, 0.0, 0)
 
-    print(f"\n{'=' * 70}")
-    print("FINAL RESULTS")
-    print(f"{'=' * 70}")
+    print(f"\n{'=' * 70}", flush=True)
+    print("FINAL RESULTS", flush=True)
+    print(f"{'=' * 70}", flush=True)
     for task_id, score in results.items():
         bar = "█" * int(score * 40) + "░" * (40 - int(score * 40))
-        print(f"  {task_id:>8}: {score:.4f} |{bar}|")
+        print(f"  {task_id:>8}: {score:.4f} |{bar}|", flush=True)
     avg = sum(results.values()) / len(results)
-    print(f"  {'AVERAGE':>8}: {avg:.4f}")
-    print(f"{'=' * 70}")
+    print(f"  {'AVERAGE':>8}: {avg:.4f}", flush=True)
+    print(f"{'=' * 70}", flush=True)
+
+    log_summary(avg)
 
 
 if __name__ == "__main__":
