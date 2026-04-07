@@ -1,0 +1,44 @@
+name: forensic-fraud-investigation
+description: >
+  AI agent environment for corporate fraud investigation. The agent receives
+  a whistleblower tip and must examine documents, cross-reference evidence,
+  identify perpetrators, and submit investigation findings. Features three
+  progressively harder scenarios: expense report fraud, vendor kickback schemes,
+  and systematic revenue fabrication.
+version: "1.0.0"
+author: "your-username"
+tags:
+  - openenv
+  - fraud-investigation
+  - forensic-analysis
+  - real-world
+
+tasks:
+  - id: easy
+    name: "The Expense Report"
+    description: "Investigate fraudulent expense reports - single perpetrator, clear evidence trail"
+    difficulty: easy
+    max_steps: 20
+
+  - id: medium
+    name: "The Vendor Kickback"
+    description: "Uncover procurement fraud with hidden vendor relationships and a pressured approver"
+    difficulty: medium
+    max_steps: 30
+
+  - id: hard
+    name: "The Quarter That Never Was"
+    description: "Investigate systematic revenue fabrication involving shell companies, coordinated cover-up across departments, and a reluctant participant"
+    difficulty: hard
+    max_steps: 40
+
+observation_space:
+  type: "Observation"
+  description: "Current investigation state including available documents, examined content, flagged evidence, identified suspects, and timeline"
+
+action_space:
+  type: "Action"
+  description: "Investigation actions: examine documents, search records, cross-reference, flag evidence, identify suspects, establish timeline, submit report"
+
+reward_range: [0.0, 1.0]
+reward_type: "partial_progress"
