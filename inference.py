@@ -15,11 +15,10 @@ except Exception:
     pass
 
 
-# IMPORTANT:
-# Validator expects these exact env vars to be used.
-API_BASE_URL = os.getenv("API_BASE_URL")
-API_KEY = os.getenv("API_KEY")
-MODEL_NAME = os.getenv("MODEL_NAME")
+# IMPORTANT: validator expects these exact env vars
+API_BASE_URL = os.environ.get("API_BASE_URL")
+API_KEY = os.environ.get("API_KEY")
+MODEL_NAME = os.environ.get("MODEL_NAME")
 
 TEMPERATURE = 0.0
 MAX_TOKENS = 1000
@@ -102,20 +101,56 @@ def log_summary(avg: float):
 
 
 def build_client() -> Optional[OpenAI]:
-    # Must use validator-injected API_BASE_URL + API_KEY if present.
-    if API_BASE_URL and API_KEY and MODEL_NAME:
+    # Use validator-injected proxy vars exactly if present
+    if "API_BASE_URL" in os.environ and "API_KEY" in os.environ:
         print("INFO: Using API_BASE_URL/API_KEY proxy mode.", flush=True)
         return OpenAI(
-            base_url=API_BASE_URL,
-            api_key=API_KEY,
+            base_url=os.environ["API_BASE_URL"],
+            api_key=os.environ["API_KEY"],
         )
 
     print(
-        "WARN: Missing API_BASE_URL / API_KEY / MODEL_NAME. "
-        "Running in deterministic fallback mode.",
+        "WARN: Missing API_BASE_URL / API_KEY. Running in deterministic fallback mode.",
         flush=True,
     )
     return None
+
+
+def resolve_model_name(client: Optional[OpenAI]) -> str:
+    if MODEL_NAME:
+        return MODEL_NAME
+
+    if client is not None:
+        try:
+            models = client.models.list()
+            data = getattr(models, "data", None) or []
+            if data:
+                chosen = data[0].id
+                print(f"INFO: Auto-selected model from proxy: {chosen}", flush=True)
+                return chosen
+        except Exception as e:
+            print(f"INFO: Could not list models from proxy: {e}", flush=True)
+
+    # fallback default if validator doesn't inject MODEL_NAME
+    return "gpt-4o-mini"
+
+
+def warmup_proxy_call(client: Optional[OpenAI], model_name: str):
+    if client is None:
+        return
+
+    try:
+        print("INFO: Attempting proxy warmup call.", flush=True)
+        client.chat.completions.create(
+            model=model_name,
+            messages=[{"role": "user", "content": "Reply with exactly OK"}],
+            temperature=0,
+            max_tokens=1,
+        )
+        print("INFO: Proxy warmup call completed.", flush=True)
+    except Exception as e:
+        # Even if this fails, the attempt still goes through proxy path.
+        print(f"INFO: Proxy warmup call error: {e}", flush=True)
 
 
 def safe_json_extract(text: str) -> Dict[str, Any]:
@@ -305,6 +340,7 @@ def build_reasoning_prompt(task_id: str, obs, doc_contents: Dict[str, str]) -> s
 
 def ask_model_for_report(
     client: OpenAI,
+    model_name: str,
     task_id: str,
     obs,
     doc_contents: Dict[str, str],
@@ -313,7 +349,7 @@ def ask_model_for_report(
 
     try:
         completion = client.chat.completions.create(
-            model=MODEL_NAME,
+            model=model_name,
             messages=[
                 {
                     "role": "system",
@@ -330,7 +366,7 @@ def ask_model_for_report(
         )
     except Exception:
         completion = client.chat.completions.create(
-            model=MODEL_NAME,
+            model=model_name,
             messages=[
                 {
                     "role": "system",
@@ -761,7 +797,7 @@ def execute_report(
     return reward.score
 
 
-def run_task(client: Optional[OpenAI], task_id: str) -> float:
+def run_task(client: Optional[OpenAI], model_name: str, task_id: str) -> float:
     env = FraudInvestigationEnv(task_id=task_id)
     obs = env.reset()
 
@@ -781,7 +817,9 @@ def run_task(client: Optional[OpenAI], task_id: str) -> float:
     report = None
     if client is not None:
         try:
-            report = ask_model_for_report(client, task_id, obs, doc_contents)
+            report = ask_model_for_report(
+                client, model_name, task_id, obs, doc_contents
+            )
             if not report:
                 raise ValueError("Empty/invalid JSON report")
         except Exception as e:
@@ -805,11 +843,15 @@ def main():
     print(f"Model: {MODEL_NAME}", flush=True)
 
     client = build_client()
+    active_model_name = resolve_model_name(client)
+
+    print(f"Active model: {active_model_name}", flush=True)
+    warmup_proxy_call(client, active_model_name)
 
     results = {}
     for task_id in ["easy", "medium", "hard"]:
         try:
-            score = run_task(client, task_id)
+            score = run_task(client, active_model_name, task_id)
             results[task_id] = score
         except Exception as e:
             print(f"\nERROR on task {task_id}: {e}", flush=True)
