@@ -208,7 +208,11 @@ class FraudInvestigationEnv:
             raise ValueError("evidence_reason required for flag_evidence")
         if doc_id not in self.documents:
             raise ValueError(f"Document not found: {doc_id}")
-        # Don't duplicate flags
+
+        # NEW: must examine before flagging
+        if doc_id not in self.examined_docs:
+            raise ValueError("Must examine a document before flagging it as evidence")
+
         existing = {f.document_id for f in self.flagged_evidence}
         if doc_id not in existing:
             self.flagged_evidence.append(
@@ -218,31 +222,52 @@ class FraudInvestigationEnv:
                     flagged_at_step=self.step_count,
                 )
             )
+
         self.last_action_result = f"Flagged evidence: {doc_id}"
 
     def _identify_suspect(self, action: Action):
         name = action.person_name
         role = action.person_role
+        evidence_ids = action.evidence_ids or []
+
         if not name:
             raise ValueError("person_name required for identify_suspect")
         if not role:
             raise ValueError("person_role required for identify_suspect")
-        # Update if already identified
+
+        # NEW: must provide evidence_ids
+        if not evidence_ids:
+            raise ValueError("evidence_ids required for identify_suspect")
+
+        # NEW: evidence must already be flagged
+        flagged_ids = {f.document_id for f in self.flagged_evidence}
+        missing = [eid for eid in evidence_ids if eid not in flagged_ids]
+        if missing:
+            raise ValueError(f"evidence_ids must be flagged first. Missing: {missing}")
+
+        # (Optional but consistent) ensure those evidence docs were examined
+        unexamined = [eid for eid in evidence_ids if eid not in self.examined_docs]
+        if unexamined:
+            raise ValueError(
+                f"evidence_ids must be examined first. Unexamined: {unexamined}"
+            )
+
         for i, s in enumerate(self.identified_suspects):
             if s.name.lower() == name.lower():
                 self.identified_suspects[i] = Suspect(
                     name=name,
                     role=role,
-                    evidence_ids=action.evidence_ids or [],
+                    evidence_ids=evidence_ids,
                     reasoning=action.evidence_reason or "",
                 )
                 self.last_action_result = f"Updated suspect: {name} ({role.value})"
                 return
+
         self.identified_suspects.append(
             Suspect(
                 name=name,
                 role=role,
-                evidence_ids=action.evidence_ids or [],
+                evidence_ids=evidence_ids,
                 reasoning=action.evidence_reason or "",
             )
         )

@@ -15,8 +15,8 @@ except Exception:
     task_aware_fallback_report = None
 
 
-OUTPUT_JSON = "benchmark_audit_results.json"
-OUTPUT_MD = "BENCHMARK_AUDIT.md"
+OUTPUT_JSON = "./Benchmark_audit/benchmark_audit_results.json"
+OUTPUT_MD = "./Benchmark_audit/BENCHMARK_AUDIT.md"
 
 SCHEME_VALUES = [
     "expense_fraud",

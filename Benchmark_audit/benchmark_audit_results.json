@@ -318,9 +318,9 @@
         "done": true
       },
       "submitted_baseline_fallback": {
-        "score": 0.62,
+        "score": 0.48,
         "breakdown": {
-          "perpetrators": 0.26,
+          "perpetrators": 0.12,
           "scheme_type": 0.1,
           "evidence": 0.23,
           "timeline": 0.03,
@@ -492,9 +492,9 @@
       "scores": {
         "easy": 1.0,
         "medium": 0.85,
-        "hard": 0.62
+        "hard": 0.48
       },
-      "average": 0.8233
+      "average": 0.7767
     }
   },
   "meta": {

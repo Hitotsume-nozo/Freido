@@ -22,7 +22,7 @@ This document audits the forensic fraud investigation environment for benchmark 
 | random_policy | 0.096 | 0.086 | 0.0484 | 0.0768 |
 | read_only_then_submit | 0.2 | 0.15 | 0.1 | 0.15 |
 | scheme_only_submit | 0.2 | 0.15 | 0.1 | 0.15 |
-| submitted_baseline_fallback | 1.0 | 0.85 | 0.62 | 0.8233 |
+| submitted_baseline_fallback | 1.0 | 0.85 | 0.48 | 0.7767 |
 
 ## Key findings
 
