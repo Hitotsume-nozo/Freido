@@ -1,0 +1,514 @@
+{
+  "per_task": {
+    "easy": {
+      "scheme_only_submit": {
+        "score": 0.2,
+        "breakdown": {
+          "perpetrators": 0.0,
+          "scheme_type": 0.2,
+          "evidence": 0.0,
+          "timeline": 0.0,
+          "false_accusation_penalty": -0.0
+        },
+        "steps": 1,
+        "done": true
+      },
+      "read_only_then_submit": {
+        "score": 0.2,
+        "breakdown": {
+          "perpetrators": 0.0,
+          "scheme_type": 0.2,
+          "evidence": 0.0,
+          "timeline": 0.0,
+          "false_accusation_penalty": -0.0
+        },
+        "steps": 7,
+        "done": true
+      },
+      "submitted_baseline_fallback": {
+        "score": 1.0,
+        "breakdown": {
+          "perpetrators": 0.3,
+          "scheme_type": 0.2,
+          "evidence": 0.4,
+          "timeline": 0.1,
+          "false_accusation_penalty": -0.0
+        },
+        "steps": 13,
+        "done": true
+      },
+      "oracle_case": {
+        "score": 1.0,
+        "breakdown": {
+          "perpetrators": 0.3,
+          "scheme_type": 0.2,
+          "evidence": 0.48,
+          "timeline": 0.1,
+          "false_accusation_penalty": -0.0
+        },
+        "steps": 15,
+        "done": true
+      },
+      "false_accusation_case": {
+        "score": 0.93,
+        "breakdown": {
+          "perpetrators": 0.3,
+          "scheme_type": 0.2,
+          "evidence": 0.48,
+          "timeline": 0.1,
+          "false_accusation_penalty": -0.07
+        },
+        "steps": 16,
+        "done": true
+      },
+      "overinclusive_case": {
+        "score": 0.44,
+        "breakdown": {
+          "perpetrators": 0.0,
+          "scheme_type": 0.0,
+          "evidence": 0.44,
+          "timeline": 0.0,
+          "false_accusation_penalty": -0.0
+        },
+        "steps": 20,
+        "done": true
+      },
+      "random_policy": {
+        "score_mean": 0.096,
+        "score_std": 0.16147445618425224,
+        "steps_mean": 20,
+        "runs": [
+          {
+            "score": 0.065,
+            "breakdown": {
+              "perpetrators": 0.3,
+              "scheme_type": 0.0,
+              "evidence": 0.0,
+              "timeline": 0.0,
+              "false_accusation_penalty": -0.235
+            },
+            "steps": 20,
+            "done": true,
+            "seed": 0
+          },
+          {
+            "score": 0.0,
+            "breakdown": {
+              "perpetrators": 0.0,
+              "scheme_type": 0.0,
+              "evidence": 0.0,
+              "timeline": 0.0,
+              "false_accusation_penalty": -0.165
+            },
+            "steps": 20,
+            "done": true,
+            "seed": 1
+          },
+          {
+            "score": 0.0,
+            "breakdown": {
+              "perpetrators": 0.0,
+              "scheme_type": 0.0,
+              "evidence": 0.0,
+              "timeline": 0.0,
+              "false_accusation_penalty": -0.19
+            },
+            "steps": 20,
+            "done": true,
+            "seed": 2
+          },
+          {
+            "score": 0.415,
+            "breakdown": {
+              "perpetrators": 0.15,
+              "scheme_type": 0.2,
+              "evidence": 0.14,
+              "timeline": 0.0,
+              "false_accusation_penalty": -0.075
+            },
+            "steps": 20,
+            "done": true,
+            "seed": 3
+          },
+          {
+            "score": 0.0,
+            "breakdown": {
+              "perpetrators": 0.0,
+              "scheme_type": 0.0,
+              "evidence": 0.0,
+              "timeline": 0.0,
+              "false_accusation_penalty": -0.095
+            },
+            "steps": 20,
+            "done": true,
+            "seed": 4
+          }
+        ]
+      }
+    },
+    "medium": {
+      "scheme_only_submit": {
+        "score": 0.15,
+        "breakdown": {
+          "perpetrators": 0.0,
+          "scheme_type": 0.15,
+          "evidence": 0.0,
+          "timeline": 0.0,
+          "false_accusation_penalty": -0.0
+        },
+        "steps": 1,
+        "done": true
+      },
+      "read_only_then_submit": {
+        "score": 0.15,
+        "breakdown": {
+          "perpetrators": 0.0,
+          "scheme_type": 0.15,
+          "evidence": 0.0,
+          "timeline": 0.0,
+          "false_accusation_penalty": -0.0
+        },
+        "steps": 12,
+        "done": true
+      },
+      "submitted_baseline_fallback": {
+        "score": 0.85,
+        "breakdown": {
+          "perpetrators": 0.3,
+          "scheme_type": 0.15,
+          "evidence": 0.3,
+          "timeline": 0.1,
+          "false_accusation_penalty": -0.0
+        },
+        "steps": 18,
+        "done": true
+      },
+      "oracle_case": {
+        "score": 1.0,
+        "breakdown": {
+          "perpetrators": 0.3,
+          "scheme_type": 0.15,
+          "evidence": 0.5,
+          "timeline": 0.1,
+          "false_accusation_penalty": -0.0
+        },
+        "steps": 26,
+        "done": true
+      },
+      "false_accusation_case": {
+        "score": 0.92,
+        "breakdown": {
+          "perpetrators": 0.3,
+          "scheme_type": 0.15,
+          "evidence": 0.5,
+          "timeline": 0.1,
+          "false_accusation_penalty": -0.08
+        },
+        "steps": 27,
+        "done": true
+      },
+      "overinclusive_case": {
+        "score": 0.46,
+        "breakdown": {
+          "perpetrators": 0.0,
+          "scheme_type": 0.0,
+          "evidence": 0.46,
+          "timeline": 0.0,
+          "false_accusation_penalty": -0.0
+        },
+        "steps": 30,
+        "done": true
+      },
+      "random_policy": {
+        "score_mean": 0.08600000000000001,
+        "score_std": 0.08873556220591607,
+        "steps_mean": 30,
+        "runs": [
+          {
+            "score": 0.0,
+            "breakdown": {
+              "perpetrators": 0.2,
+              "scheme_type": 0.0,
+              "evidence": 0.02,
+              "timeline": 0.0,
+              "false_accusation_penalty": -0.23
+            },
+            "steps": 30,
+            "done": true,
+            "seed": 0
+          },
+          {
+            "score": 0.015,
+            "breakdown": {
+              "perpetrators": 0.05,
+              "scheme_type": 0.0,
+              "evidence": 0.15,
+              "timeline": 0.0,
+              "false_accusation_penalty": -0.185
+            },
+            "steps": 30,
+            "done": true,
+            "seed": 1
+          },
+          {
+            "score": 0.25,
+            "breakdown": {
+              "perpetrators": 0.15,
+              "scheme_type": 0.0,
+              "evidence": 0.17,
+              "timeline": 0.0,
+              "false_accusation_penalty": -0.07
+            },
+            "steps": 30,
+            "done": true,
+            "seed": 2
+          },
+          {
+            "score": 0.085,
+            "breakdown": {
+              "perpetrators": 0.05,
+              "scheme_type": 0.0,
+              "evidence": 0.06,
+              "timeline": 0.0,
+              "false_accusation_penalty": -0.025
+            },
+            "steps": 30,
+            "done": true,
+            "seed": 3
+          },
+          {
+            "score": 0.08,
+            "breakdown": {
+              "perpetrators": 0.1,
+              "scheme_type": 0.0,
+              "evidence": 0.04,
+              "timeline": 0.0,
+              "false_accusation_penalty": -0.06
+            },
+            "steps": 30,
+            "done": true,
+            "seed": 4
+          }
+        ]
+      }
+    },
+    "hard": {
+      "scheme_only_submit": {
+        "score": 0.1,
+        "breakdown": {
+          "perpetrators": 0.0,
+          "scheme_type": 0.1,
+          "evidence": 0.0,
+          "timeline": 0.0,
+          "false_accusation_penalty": -0.0
+        },
+        "steps": 1,
+        "done": true
+      },
+      "read_only_then_submit": {
+        "score": 0.1,
+        "breakdown": {
+          "perpetrators": 0.0,
+          "scheme_type": 0.1,
+          "evidence": 0.0,
+          "timeline": 0.0,
+          "false_accusation_penalty": -0.0
+        },
+        "steps": 18,
+        "done": true
+      },
+      "submitted_baseline_fallback": {
+        "score": 0.62,
+        "breakdown": {
+          "perpetrators": 0.26,
+          "scheme_type": 0.1,
+          "evidence": 0.23,
+          "timeline": 0.03,
+          "false_accusation_penalty": -0.0
+        },
+        "steps": 20,
+        "done": true
+      },
+      "oracle_case": {
+        "score": 0.99,
+        "breakdown": {
+          "perpetrators": 0.26,
+          "scheme_type": 0.1,
+          "evidence": 0.57,
+          "timeline": 0.06,
+          "false_accusation_penalty": -0.0
+        },
+        "steps": 39,
+        "done": true
+      },
+      "false_accusation_case": {
+        "score": 0.89,
+        "breakdown": {
+          "perpetrators": 0.26,
+          "scheme_type": 0.1,
+          "evidence": 0.57,
+          "timeline": 0.06,
+          "false_accusation_penalty": -0.1
+        },
+        "steps": 40,
+        "done": true
+      },
+      "overinclusive_case": {
+        "score": 0.55,
+        "breakdown": {
+          "perpetrators": 0.0,
+          "scheme_type": 0.0,
+          "evidence": 0.55,
+          "timeline": 0.0,
+          "false_accusation_penalty": -0.0
+        },
+        "steps": 40,
+        "done": true
+      },
+      "random_policy": {
+        "score_mean": 0.0484,
+        "score_std": 0.05537363993815108,
+        "steps_mean": 40,
+        "runs": [
+          {
+            "score": 0.0,
+            "breakdown": {
+              "perpetrators": 0.1,
+              "scheme_type": 0.0,
+              "evidence": 0.05,
+              "timeline": 0.0,
+              "false_accusation_penalty": -0.35
+            },
+            "steps": 40,
+            "done": true,
+            "seed": 0
+          },
+          {
+            "score": 0.13,
+            "breakdown": {
+              "perpetrators": 0.19,
+              "scheme_type": 0.0,
+              "evidence": 0.1,
+              "timeline": 0.0,
+              "false_accusation_penalty": -0.16
+            },
+            "steps": 40,
+            "done": true,
+            "seed": 1
+          },
+          {
+            "score": 0.1,
+            "breakdown": {
+              "perpetrators": 0.13,
+              "scheme_type": 0.0,
+              "evidence": 0.13,
+              "timeline": 0.0,
+              "false_accusation_penalty": -0.16
+            },
+            "steps": 40,
+            "done": true,
+            "seed": 2
+          },
+          {
+            "score": 0.0,
+            "breakdown": {
+              "perpetrators": 0.09,
+              "scheme_type": 0.0,
+              "evidence": 0.06,
+              "timeline": 0.0,
+              "false_accusation_penalty": -0.284
+            },
+            "steps": 40,
+            "done": true,
+            "seed": 3
+          },
+          {
+            "score": 0.012,
+            "breakdown": {
+              "perpetrators": 0.07,
+              "scheme_type": 0.0,
+              "evidence": 0.09,
+              "timeline": 0.0,
+              "false_accusation_penalty": -0.148
+            },
+            "steps": 40,
+            "done": true,
+            "seed": 4
+          }
+        ]
+      }
+    }
+  },
+  "per_policy": {
+    "false_accusation_case": {
+      "scores": {
+        "easy": 0.93,
+        "medium": 0.92,
+        "hard": 0.89
+      },
+      "average": 0.9133
+    },
+    "oracle_case": {
+      "scores": {
+        "easy": 1.0,
+        "medium": 1.0,
+        "hard": 0.99
+      },
+      "average": 0.9967
+    },
+    "overinclusive_case": {
+      "scores": {
+        "easy": 0.44,
+        "medium": 0.46,
+        "hard": 0.55
+      },
+      "average": 0.4833
+    },
+    "random_policy": {
+      "scores": {
+        "easy": 0.096,
+        "medium": 0.086,
+        "hard": 0.0484
+      },
+      "average": 0.0768
+    },
+    "read_only_then_submit": {
+      "scores": {
+        "easy": 0.2,
+        "medium": 0.15,
+        "hard": 0.1
+      },
+      "average": 0.15
+    },
+    "scheme_only_submit": {
+      "scores": {
+        "easy": 0.2,
+        "medium": 0.15,
+        "hard": 0.1
+      },
+      "average": 0.15
+    },
+    "submitted_baseline_fallback": {
+      "scores": {
+        "easy": 1.0,
+        "medium": 0.85,
+        "hard": 0.62
+      },
+      "average": 0.8233
+    }
+  },
+  "meta": {
+    "task_ids": [
+      "easy",
+      "medium",
+      "hard"
+    ],
+    "random_seeds": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ]
+  }
+}

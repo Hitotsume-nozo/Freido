@@ -1,13 +1,5 @@
-# graders.py
 from typing import Dict, List, Any, Optional
-from models import (
-    Suspect,
-    SuspectRole,
-    SchemeType,
-    FlaggedItem,
-    TimelineEvent,
-    FindingsReport,
-)
+from models import Suspect, SuspectRole, FlaggedItem, TimelineEvent
 
 
 class FraudInvestigationGrader:
@@ -25,34 +17,28 @@ class FraudInvestigationGrader:
         findings: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         breakdown = {}
-        total = 0.0
 
-        # 1. Perpetrator identification
+        # Positive components
         perp_score = self._grade_perpetrators(identified_suspects)
-        breakdown["perpetrators"] = perp_score
-        total += perp_score
-
-        # 2. Scheme identification
         scheme_score = self._grade_scheme(scheme_type)
-        breakdown["scheme_type"] = scheme_score
-        total += scheme_score
-
-        # 3. Evidence collection
         evidence_score = self._grade_evidence(flagged_evidence)
-        breakdown["evidence"] = evidence_score
-        total += evidence_score
+        timeline_score = self._grade_timeline(timeline)
 
-        # 4. False accusation penalty
+        breakdown["perpetrators"] = perp_score
+        breakdown["scheme_type"] = scheme_score
+        breakdown["evidence"] = evidence_score
+        breakdown["timeline"] = timeline_score
+
+        positive_total = perp_score + scheme_score + evidence_score + timeline_score
+
+        # IMPORTANT:
+        # Clamp positive part first so penalties are never hidden by overflow > 1.0
+        positive_total_capped = min(1.0, positive_total)
+
         penalty = self._false_accusation_penalty(identified_suspects)
         breakdown["false_accusation_penalty"] = -penalty
-        total -= penalty
 
-        # 5. Timeline accuracy
-        timeline_score = self._grade_timeline(timeline)
-        breakdown["timeline"] = timeline_score
-        total += timeline_score
-
-        final_score = max(0.0, min(1.0, total))
+        final_score = max(0.0, min(1.0, positive_total_capped - penalty))
 
         return {
             "score": round(final_score, 4),
@@ -67,16 +53,14 @@ class FraudInvestigationGrader:
         for name, info in gold_perps.items():
             weight = info["weight"]
             aliases = info.get("aliases", [])
-            all_names = [name.lower()] + [a.lower() for a in aliases]
+            all_names = {name.lower(), *(a.lower() for a in aliases)}
 
             for suspect in suspects:
                 if suspect.name.lower() in all_names:
-                    # Full credit for correct name
-                    role_match = self._role_matches(suspect.role, info["role"])
-                    if role_match:
+                    if self._role_matches(suspect.role, info["role"]):
                         score += weight
                     else:
-                        # Half credit for correct person, wrong role
+                        # Partial credit for naming the right person but wrong role
                         score += weight * 0.5
                     break
 
@@ -88,11 +72,16 @@ class FraudInvestigationGrader:
     def _grade_scheme(self, scheme_type: Optional[str]) -> float:
         if scheme_type is None:
             return 0.0
+
         expected = self.gold.get("scheme_type", "")
         weight = self.gold.get("scheme_weight", 0.15)
-        if scheme_type.lower().replace(" ", "_") == expected.lower():
+
+        clean_given = scheme_type.lower().replace(" ", "_")
+        clean_expected = expected.lower().replace(" ", "_")
+
+        if clean_given == clean_expected:
             return weight
-        # Partial credit for related schemes
+
         related = {
             "revenue_fabrication": [
                 "financial_fraud",
@@ -102,10 +91,10 @@ class FraudInvestigationGrader:
             "expense_fraud": ["expense_report_fraud", "fake_expenses"],
             "vendor_kickback": ["procurement_fraud", "kickback", "vendor_fraud"],
         }
-        related_terms = related.get(expected, [])
-        clean_given = scheme_type.lower().replace(" ", "_")
-        if clean_given in related_terms:
+
+        if clean_given in related.get(clean_expected, []):
             return weight * 0.5
+
         return 0.0
 
     def _grade_evidence(self, flagged: List[FlaggedItem]) -> float:
@@ -117,67 +106,104 @@ class FraudInvestigationGrader:
             if doc_id in flagged_ids:
                 score += info["weight"]
 
-        return score
+        # Small anti-spam penalty for irrelevant flagged evidence
+        wrong_flags = [doc_id for doc_id in flagged_ids if doc_id not in gold_evidence]
+        score -= min(0.10, 0.01 * len(wrong_flags))
+
+        return max(0.0, score)
 
     def _false_accusation_penalty(self, suspects: List[Suspect]) -> float:
-        penalty_per = self.gold.get("false_accusation_penalty", 0.10)
+        """
+        Stronger and more realistic penalty design:
+        - accusing a known innocent as mastermind/accomplice hurts a lot
+        - accusing a witness/participant as mastermind/accomplice hurts moderately
+        - inventing unknown suspects hurts moderately
+        - correct suspect but wrong role is already handled by partial credit, so no extra penalty
+        """
+        base_penalty = self.gold.get("false_accusation_penalty", 0.10)
+
         gold_perps = self.gold.get("perpetrators", {})
         non_perps = self.gold.get("non_perpetrators", {})
 
-        penalty = 0.0
-        gold_names = set()
-        for name in gold_perps:
-            gold_names.add(name.lower())
-            for alias in gold_perps[name].get("aliases", []):
-                gold_names.add(alias.lower())
+        gold_name_to_info = {}
+        for name, info in gold_perps.items():
+            gold_name_to_info[name.lower()] = info
+            for alias in info.get("aliases", []):
+                gold_name_to_info[alias.lower()] = info
 
-        acceptable_names = set()
-        for name, info in non_perps.items():
-            acceptable_roles = info.get("acceptable_roles", [])
-            if acceptable_roles:
-                acceptable_names.add(name.lower())
+        non_perp_name_to_info = {name.lower(): info for name, info in non_perps.items()}
+
+        penalty = 0.0
 
         for suspect in suspects:
             sname = suspect.name.lower()
-            if sname in gold_names:
-                continue
-            if sname in acceptable_names:
-                # Check if role is acceptable
-                non_perp_info = None
-                for npname, npinfo in non_perps.items():
-                    if npname.lower() == sname:
-                        non_perp_info = npinfo
-                        break
-                if non_perp_info:
-                    acceptable = non_perp_info.get("acceptable_roles", [])
-                    if suspect.role.value in acceptable:
-                        continue
-            # Check if truly innocent
-            if sname in {n.lower() for n in non_perps}:
-                non_perp_info = non_perps.get(
-                    next(n for n in non_perps if n.lower() == sname), {}
-                )
-                if non_perp_info.get("role") == "innocent":
-                    penalty += penalty_per
-                else:
-                    # Not innocent but wrongly accused as perpetrator
-                    if suspect.role in [SuspectRole.MASTERMIND, SuspectRole.ACCOMPLICE]:
-                        penalty += penalty_per * 0.5
+            srole = suspect.role.value
 
-        return penalty
+            # Correct perpetrators: no accusation penalty here
+            if sname in gold_name_to_info:
+                continue
+
+            # Known non-perp
+            if sname in non_perp_name_to_info:
+                info = non_perp_name_to_info[sname]
+                true_role = info.get("role")
+                acceptable_roles = info.get("acceptable_roles", [])
+
+                # If explicitly acceptable, no penalty
+                if acceptable_roles and srole in acceptable_roles:
+                    continue
+
+                # Innocent person wrongly accused as perpetrator = heavy penalty
+                if true_role == "innocent":
+                    if srole in ["mastermind", "accomplice"]:
+                        penalty += base_penalty * 1.25
+                    elif srole == "reluctant_participant":
+                        penalty += base_penalty * 0.75
+                    else:
+                        penalty += base_penalty * 0.40
+                    continue
+
+                # Witness / non-perp wrongly promoted to perpetrator = moderate penalty
+                if true_role in ["witness", "reluctant_participant"]:
+                    if srole in ["mastermind", "accomplice"]:
+                        penalty += base_penalty * 0.80
+                    elif (
+                        srole == "reluctant_participant"
+                        and true_role != "reluctant_participant"
+                    ):
+                        penalty += base_penalty * 0.35
+                    elif srole == "witness":
+                        penalty += base_penalty * 0.10
+                    continue
+
+                # Fallback for any other known non-perp category
+                penalty += base_penalty * 0.50
+                continue
+
+            # Unknown fabricated suspect = moderate penalty
+            if srole in ["mastermind", "accomplice"]:
+                penalty += base_penalty * 0.70
+            elif srole == "reluctant_participant":
+                penalty += base_penalty * 0.45
+            else:
+                penalty += base_penalty * 0.25
+
+        # Cap total penalty but allow it to matter strongly
+        return min(penalty, 0.35)
 
     def _grade_timeline(self, timeline: List[TimelineEvent]) -> float:
         if not timeline:
             return 0.0
+
         weight = self.gold.get("timeline_weight", 0.10)
-        # Give credit for having a timeline with reasonable events
+
         if len(timeline) >= 3:
             return weight
         elif len(timeline) >= 1:
             return weight * 0.5
         return 0.0
 
-    def _build_message(self, breakdown: Dict, final: float) -> str:
+    def _build_message(self, breakdown: Dict[str, float], final: float) -> str:
         parts = []
         for key, val in breakdown.items():
             parts.append(f"{key}: {val:+.4f}")
