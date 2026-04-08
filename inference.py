@@ -80,6 +80,14 @@ MAX_TIMELINE_EVENTS = {
 }
 
 
+def bounded_score(x: float, eps: float = 1e-3) -> float:
+    if x <= 0.0:
+        return eps
+    if x >= 1.0:
+        return 1.0 - eps
+    return x
+
+
 def log_start(task_id: str):
     print(f"[START] task={task_id}", flush=True)
 
@@ -93,6 +101,7 @@ def log_step(task_id: str, step: int, action: str, reward: float, done: bool):
 
 
 def log_end(task_id: str, score: float, steps: int):
+    score = bounded_score(score)
     print(f"[END] task={task_id} score={score:.4f} steps={steps}", flush=True)
 
 
@@ -101,13 +110,17 @@ def log_summary(avg: float):
 
 
 def build_client() -> Optional[OpenAI]:
-    # Use validator-injected proxy vars exactly if present
     if "API_BASE_URL" in os.environ and "API_KEY" in os.environ:
         print("INFO: Using API_BASE_URL/API_KEY proxy mode.", flush=True)
-        return OpenAI(
-            base_url=os.environ["API_BASE_URL"],
-            api_key=os.environ["API_KEY"],
-        )
+        try:
+            return OpenAI(
+                base_url=os.environ["API_BASE_URL"],
+                api_key=os.environ["API_KEY"],
+            )
+        except Exception as e:
+            print(f"WARN: Failed to initialize OpenAI client: {e}", flush=True)
+            print("WARN: Falling back to deterministic mode.", flush=True)
+            return None
 
     print(
         "WARN: Missing API_BASE_URL / API_KEY. Running in deterministic fallback mode.",
@@ -131,7 +144,6 @@ def resolve_model_name(client: Optional[OpenAI]) -> str:
         except Exception as e:
             print(f"INFO: Could not list models from proxy: {e}", flush=True)
 
-    # fallback default if validator doesn't inject MODEL_NAME
     return "gpt-4o-mini"
 
 
@@ -149,7 +161,6 @@ def warmup_proxy_call(client: Optional[OpenAI], model_name: str):
         )
         print("INFO: Proxy warmup call completed.", flush=True)
     except Exception as e:
-        # Even if this fails, the attempt still goes through proxy path.
         print(f"INFO: Proxy warmup call error: {e}", flush=True)
 
 
@@ -727,7 +738,7 @@ def execute_report(
         print(f"  Flag evidence: {item['document_id']}", flush=True)
         flagged_doc_ids.append(item["document_id"])
         if done:
-            return reward.score
+            return bounded_score(reward.score)
 
     flagged_doc_ids_set = set(flagged_doc_ids)
 
@@ -754,7 +765,7 @@ def execute_report(
             flush=True,
         )
         if done:
-            return reward.score
+            return bounded_score(reward.score)
 
     timeline = filtered_timeline(task_id, report, allowed_doc_ids_set)
     if not timeline:
@@ -773,7 +784,7 @@ def execute_report(
         )
         print(f"  Establish timeline: {len(timeline)} events", flush=True)
         if done:
-            return reward.score
+            return bounded_score(reward.score)
 
     scheme = normalize_scheme(task_id, report.get("scheme_type"))
     summary = report.get("summary", "Investigation findings submitted.")
@@ -791,10 +802,12 @@ def execute_report(
     )
     print("  Submit report", flush=True)
     print("\n  REPORT SUBMITTED\n", flush=True)
-    print(f"  Score: {reward.score:.4f}", flush=True)
+
+    safe_final = bounded_score(reward.score)
+    print(f"  Score: {safe_final:.4f}", flush=True)
     print(f"  Breakdown: {json.dumps(reward.breakdown, indent=2)}", flush=True)
     print(f"  {reward.message}", flush=True)
-    return reward.score
+    return safe_final
 
 
 def run_task(client: Optional[OpenAI], model_name: str, task_id: str) -> float:
@@ -830,6 +843,7 @@ def run_task(client: Optional[OpenAI], model_name: str, task_id: str) -> float:
         report = task_aware_fallback_report(task_id, allowed_doc_ids)
 
     final_score = execute_report(env, task_id, report, allowed_doc_ids)
+    final_score = bounded_score(final_score)
 
     final_state = env.state()
     steps_taken = final_state.get("step_count", 0)
@@ -852,12 +866,12 @@ def main():
     for task_id in ["easy", "medium", "hard"]:
         try:
             score = run_task(client, active_model_name, task_id)
-            results[task_id] = score
+            results[task_id] = bounded_score(score)
         except Exception as e:
             print(f"\nERROR on task {task_id}: {e}", flush=True)
-            results[task_id] = 0.0
+            results[task_id] = bounded_score(0.0)
             log_start(task_id)
-            log_end(task_id, 0.0, 0)
+            log_end(task_id, results[task_id], 0)
 
     print(f"\n{'=' * 70}", flush=True)
     print("FINAL RESULTS", flush=True)
