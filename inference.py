@@ -15,8 +15,10 @@ except Exception:
     pass
 
 
+# IMPORTANT:
+# Validator expects these exact env vars to be used.
 API_BASE_URL = os.getenv("API_BASE_URL")
-API_KEY = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
+API_KEY = os.getenv("API_KEY")
 MODEL_NAME = os.getenv("MODEL_NAME")
 
 TEMPERATURE = 0.0
@@ -100,23 +102,20 @@ def log_summary(avg: float):
 
 
 def build_client() -> Optional[OpenAI]:
-    if not API_BASE_URL or not API_KEY or not MODEL_NAME:
-        print(
-            "WARN: Missing API_BASE_URL / HF_TOKEN / MODEL_NAME. "
-            "Running in deterministic fallback mode.",
-            flush=True,
-        )
-        return None
-
-    try:
+    # Must use validator-injected API_BASE_URL + API_KEY if present.
+    if API_BASE_URL and API_KEY and MODEL_NAME:
+        print("INFO: Using API_BASE_URL/API_KEY proxy mode.", flush=True)
         return OpenAI(
             base_url=API_BASE_URL,
             api_key=API_KEY,
         )
-    except Exception as e:
-        print(f"WARN: Failed to initialize OpenAI client: {e}", flush=True)
-        print("WARN: Falling back to deterministic mode.", flush=True)
-        return None
+
+    print(
+        "WARN: Missing API_BASE_URL / API_KEY / MODEL_NAME. "
+        "Running in deterministic fallback mode.",
+        flush=True,
+    )
+    return None
 
 
 def safe_json_extract(text: str) -> Dict[str, Any]:
@@ -663,44 +662,6 @@ def task_aware_fallback_report(
     return report
 
 
-def supplement_with_fallback_suspects(
-    task_id: str,
-    suspects: List[Dict[str, Any]],
-    flagged_doc_ids_set: set,
-    allowed_doc_ids: List[str],
-) -> List[Dict[str, Any]]:
-    fallback = task_aware_fallback_report(task_id, allowed_doc_ids)
-    fallback_suspects = filtered_suspects(fallback, flagged_doc_ids_set)
-
-    existing = {s["name"].lower() for s in suspects}
-    for fs in fallback_suspects:
-        if fs["name"].lower() not in existing:
-            suspects.append(fs)
-            existing.add(fs["name"].lower())
-        if len(suspects) >= 4:
-            break
-    return suspects
-
-
-def supplement_with_fallback_timeline(
-    task_id: str,
-    timeline: List[TimelineEvent],
-    allowed_doc_ids_set: set,
-    allowed_doc_ids: List[str],
-) -> List[TimelineEvent]:
-    fallback = task_aware_fallback_report(task_id, allowed_doc_ids)
-    fallback_timeline = filtered_timeline(task_id, fallback, allowed_doc_ids_set)
-
-    existing = {t.description for t in timeline}
-    for ft in fallback_timeline:
-        if ft.description not in existing:
-            timeline.append(ft)
-            existing.add(ft.description)
-        if len(timeline) >= MAX_TIMELINE_EVENTS[task_id]:
-            break
-    return timeline
-
-
 def execute_report(
     env: FraudInvestigationEnv,
     task_id: str,
@@ -735,15 +696,10 @@ def execute_report(
     flagged_doc_ids_set = set(flagged_doc_ids)
 
     suspects = filtered_suspects(report, flagged_doc_ids_set)
-    if task_id == "hard" and len(suspects) < 3:
-        suspects = supplement_with_fallback_suspects(
-            task_id, suspects, flagged_doc_ids_set, allowed_doc_ids
-        )
-    elif not suspects:
+    if not suspects:
         print("  Using fallback report for suspects", flush=True)
-        suspects = supplement_with_fallback_suspects(
-            task_id, suspects, flagged_doc_ids_set, allowed_doc_ids
-        )
+        fallback = task_aware_fallback_report(task_id, allowed_doc_ids)
+        suspects = filtered_suspects(fallback, flagged_doc_ids_set)
 
     for suspect in suspects:
         obs, reward, done, info = env_step_with_log(
@@ -765,15 +721,10 @@ def execute_report(
             return reward.score
 
     timeline = filtered_timeline(task_id, report, allowed_doc_ids_set)
-    if task_id == "easy" and len(timeline) < 3:
-        timeline = supplement_with_fallback_timeline(
-            task_id, timeline, allowed_doc_ids_set, allowed_doc_ids
-        )
-    elif not timeline:
+    if not timeline:
         print("  Using fallback report for timeline", flush=True)
-        timeline = supplement_with_fallback_timeline(
-            task_id, timeline, allowed_doc_ids_set, allowed_doc_ids
-        )
+        fallback = task_aware_fallback_report(task_id, allowed_doc_ids)
+        timeline = filtered_timeline(task_id, fallback, allowed_doc_ids_set)
 
     if timeline:
         obs, reward, done, info = env_step_with_log(
